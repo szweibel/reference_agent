@@ -1,0 +1,43 @@
+{
+  "name": "reference_agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "start:cli": "node dist/index.js",
+    "start:server": "node dist/server.js",
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "dev:cli": "node --loader ts-node/esm src/index.ts",
+    "dev:server": "node --loader ts-node/esm src/server.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.6.2",
+    "autoprefixer": "^10.4.16",
+    "daisyui": "^4.12.13",
+    "postcss": "^8.4.38",
+    "supertest": "^7.1.1",
+    "tailwindcss": "^3.4.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.0"
+  }
+}

@@ -1,0 +1,51 @@
+# Node dependencies
+node_modules/
+
+# Build outputs
+/dist/
+
+# Logs and runtime artifacts
+logs/
+*.log
+
+# TypeScript cache
+.tsbuildinfo
+
+# Tooling caches
+.cache/
+.parcel-cache/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+.fleet/
+.history/
+
+# Local environment files
+primo/.env
+primo/.env.*
+*.env.local
+.env
+.env.*
+!.env.example
+
+# Test artifacts
+coverage/
+
+# Build tooling
+.turbo/
+.swc/
+.eslintcache
+
+# Misc
+tmp/
+.temp/
+
+# npm/yarn debug files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mina Rees Library Reference Agent</title>
+    <script>window.__BASE_PATH__ = '__BASE_PATH__';</script>
+    <link rel="stylesheet" href="__TAILWIND_PATH__" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        background: #ffffff;
+        color: #1a1a1a;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+      }
+      #header {
+        border-bottom: 1px solid #e5e5e5;
+        padding: 12px 16px;
+        flex-shrink: 0;
+        background: #ffffff;
+      }
+      #header-content {
+        max-width: 48rem;
+        margin: 0 auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+      }
+      #header h1 {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+        color: #1a1a1a;
+      }
+      #header-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #cost-display {
+        font-size: 13px;
+        color: #666;
+      }
+      #clear-button {
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 18px;
+        color: #999;
+        cursor: pointer;
+        white-space: nowrap;
+        line-height: 1;
+      }
+      #clear-button:hover {
+        background: #f5f5f5;
+        color: #666;
+      }
+      #messages-container {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        -webkit-overflow-scrolling: touch;
+      }
+      #messages {
+        max-width: 48rem;
+        margin: 0 auto;
+        padding: 24px 16px 120px 16px;
+      }
+      .message {
+        margin-bottom: 24px;
+      }
+      .message-user {
+        background: #f7f7f7;
+        padding: 16px;
+        border-radius: 8px;
+      }
+      .message-user::before {
+        content: 'You';
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: #666;
+        margin-bottom: 8px;
+      }
+      .message-assistant {
+        color: #1a1a1a;
+        position: relative;
+      }
+      .message-assistant-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .message-assistant-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #10a37f;
+      }
+      .copy-button {
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        padding: 4px 6px;
+        font-size: 16px;
+        color: transparent;
+        cursor: pointer;
+        line-height: 1;
+        transition: color 0.15s;
+      }
+      .copy-button:hover {
+        background: #f5f5f5;
+        color: #666;
+      }
+      .message-assistant:hover .copy-button {
+        color: #999;
+      }
+      .message-assistant a {
+        color: #0066cc;
+        text-decoration: underline;
+      }
+      .message-assistant a:hover {
+        color: #0052a3;
+      }
+      .message-content {
+        line-height: 1.6;
+        font-size: 15px;
+      }
+      .message-content p {
+        margin: 0 0 12px 0;
+      }
+      .message-content p:last-child {
+        margin-bottom: 0;
+      }
+      .message-content ul, .message-content ol {
+        margin: 8px 0;
+        padding-left: 24px;
+      }
+      .message-content li {
+        margin: 4px 0;
+      }
+      .message-content pre {
+        background: #f5f5f5;
+        padding: 12px;
+        border-radius: 6px;
+        overflow-x: auto;
+        margin: 12px 0;
+      }
+      .message-content code {
+        background: #f5f5f5;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        font-size: 14px;
+      }
+      .message-content pre code {
+        background: transparent;
+        padding: 0;
+      }
+      .streaming {
+        opacity: 0.8;
+      }
+      .tool-use {
+        background: #f8f8f8;
+        border: 1px solid #e5e5e5;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 12px 0;
+        font-size: 14px;
+      }
+      .tool-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .tool-name {
+        font-weight: 600;
+        color: #1a1a1a;
+      }
+      .tool-status {
+        font-size: 12px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: #e5e5e5;
+        color: #666;
+      }
+      .tool-status.running {
+        background: #dbeafe;
+        color: #1e40af;
+      }
+      .tool-status.completed {
+        background: #dcfce7;
+        color: #15803d;
+      }
+      .tool-details {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #e5e5e5;
+        display: none;
+      }
+      .tool-details.open {
+        display: block;
+      }
+      .tool-details pre {
+        background: #ffffff;
+        border: 1px solid #e5e5e5;
+        padding: 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        overflow-x: auto;
+        margin: 8px 0 0 0;
+      }
+      .tool-section-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #666;
+        margin-bottom: 4px;
+        font-weight: 600;
+      }
+      .meta-message {
+        text-align: center;
+        font-size: 13px;
+        color: #666;
+        margin: 16px 0;
+      }
+      .meta-message.error {
+        color: #dc2626;
+      }
+      #input-container {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #ffffff;
+        border-top: 1px solid #e5e5e5;
+        padding: 16px;
+        flex-shrink: 0;
+      }
+      #input-wrapper {
+        max-width: 48rem;
+        margin: 0 auto;
+        display: flex;
+        gap: 12px;
+        align-items: flex-end;
+      }
+      #prompt {
+        flex: 1;
+        border: 1px solid #d1d1d1;
+        border-radius: 8px;
+        padding: 12px 16px;
+        font-size: 15px;
+        font-family: inherit;
+        resize: none;
+        min-height: 52px;
+        max-height: 200px;
+        line-height: 1.5;
+      }
+      #prompt:focus {
+        outline: none;
+        border-color: #0066cc;
+        box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+      }
+      #submit-button {
+        background: #10a37f;
+        color: #ffffff;
+        border: none;
+        border-radius: 8px;
+        padding: 12px 24px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 0.2s;
+        min-height: 44px;
+      }
+      #submit-button:hover:not(:disabled) {
+        background: #0d8c6d;
+      }
+      #submit-button:disabled {
+        background: #d1d1d1;
+        cursor: not-allowed;
+      }
+      #stop-button {
+        background: #dc2626;
+        color: #ffffff;
+        border: none;
+        border-radius: 8px;
+        padding: 12px 24px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+        min-height: 44px;
+      }
+      #stop-button:hover {
+        background: #b91c1c;
+      }
+      .placeholder {
+        text-align: center;
+        color: #999;
+        padding: 48px 16px;
+        font-size: 15px;
+      }
+      .loading-spinner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 24px;
+        color: #666;
+        font-size: 14px;
+      }
+      .spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid #e5e5e5;
+        border-top-color: #10a37f;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      @media (max-width: 768px) {
+        #messages {
+          padding: 16px 12px 100px 12px;
+        }
+        #input-container {
+          padding: 12px;
+        }
+        #input-wrapper {
+          gap: 8px;
+        }
+        #submit-button, #stop-button {
+          padding: 12px 16px;
+          min-height: 48px;
+        }
+        #prompt {
+          font-size: 16px;
+        }
+        #clear-button {
+          padding: 8px;
+          min-height: 44px;
+          min-width: 44px;
+          font-size: 20px;
+        }
+        .copy-button {
+          color: #999;
+          padding: 6px 8px;
+          min-height: 36px;
+          min-width: 36px;
+          font-size: 18px;
+        }
+        .message {
+          margin-bottom: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="header">
+      <div id="header-content">
+        <h1>Mina Rees Library Reference Agent</h1>
+        <div id="header-right">
+          <div id="cost-display"></div>
+          <button id="clear-button" type="button" title="Clear conversation">✕</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="messages-container">
+      <div id="messages">
+        <div class="placeholder">Ask a question about library services, resources, or policies.</div>
+      </div>
+    </div>
+
+    <div id="input-container">
+      <form id="query-form" autocomplete="off">
+        <input type="hidden" id="library" name="library" value="mina-rees" />
+        <div id="input-wrapper">
+          <textarea
+            id="prompt"
+            name="prompt"
+            placeholder="Ask about hours, services, or policies..."
+            rows="1"
+            required
+          ></textarea>
+          <button id="submit-button" type="submit">Send</button>
+          <button id="stop-button" type="button" style="display: none;">Stop</button>
+        </div>
+      </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      const markdownRenderer = typeof window.markdownit === 'function'
+        ? window.markdownit({ html: false, linkify: true, breaks: true })
+        : null;
+
+      if (markdownRenderer) {
+        const defaultLinkOpen =
+          markdownRenderer.renderer.rules.link_open ||
+          ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options));
+        markdownRenderer.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+          const token = tokens[idx];
+          if (!token.attrGet('target')) {
+            token.attrPush(['target', '_blank']);
+          }
+          token.attrSet('rel', 'noopener noreferrer');
+          return defaultLinkOpen(tokens, idx, options, env, self);
+        };
+      }
+
+      const form = document.getElementById('query-form');
+      const promptField = document.getElementById('prompt');
+      const messagesContainer = document.getElementById('messages-container');
+      const messagesEl = document.getElementById('messages');
+      const submitButton = document.getElementById('submit-button');
+      const stopButton = document.getElementById('stop-button');
+      const clearButton = document.getElementById('clear-button');
+      const costDisplay = document.getElementById('cost-display');
+
+      const BASE_PATH = (() => {
+        const configuredBasePath =
+          typeof window.__BASE_PATH__ === 'string' && window.__BASE_PATH__ !== '__BASE_PATH__'
+            ? window.__BASE_PATH__
+            : '';
+        if (configuredBasePath) {
+          return configuredBasePath;
+        }
+
+        const rawPath = window.location.pathname.replace(/\/?index\.html$/, '');
+        if (!rawPath || rawPath === '/' || rawPath === '') {
+          return '';
+        }
+
+        const trimmed = rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
+        const segments = trimmed.split('/').filter(Boolean);
+        if (segments.length === 0) {
+          return '';
+        }
+        return `/${segments[0]}`;
+      })();
+      const API_BASE = BASE_PATH ? `${BASE_PATH}/api` : '/api';
+
+      const conversation = [];
+      const toolState = new Map();
+      let activeController = null;
+      let streamingText = '';
+      let isLoading = false;
+      const HISTORY_LIMIT = 20;
+
+      // Auto-resize textarea
+      promptField.addEventListener('input', () => {
+        promptField.style.height = 'auto';
+        promptField.style.height = Math.min(promptField.scrollHeight, 200) + 'px';
+      });
+
+      // Submit on Ctrl/Cmd+Enter
+      promptField.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+
+      // Clear conversation
+      clearButton.addEventListener('click', () => {
+        if (conversation.length === 0) return;
+        if (confirm('Clear conversation history?')) {
+          conversation.length = 0;
+          toolState.clear();
+          streamingText = '';
+          updateCostDisplay(null);
+          render();
+        }
+      });
+
+      // Stop generation
+      stopButton.addEventListener('click', () => {
+        if (activeController) {
+          activeController.abort();
+        }
+      });
+
+      // Copy assistant message
+      window.copyMessage = async function(index) {
+        const entry = conversation[index];
+        if (!entry || entry.type !== 'assistant') return;
+
+        try {
+          await navigator.clipboard.writeText(entry.content);
+          const button = document.querySelector(`[data-copy-index="${index}"]`);
+          if (button) {
+            const originalText = button.textContent;
+            button.textContent = '✓';
+            button.style.color = '#10a37f';
+            setTimeout(() => {
+              button.textContent = originalText;
+              button.style.color = '';
+            }, 2000);
+          }
+        } catch (err) {
+          console.error('Failed to copy:', err);
+        }
+      };
+
+      function updateCostDisplay(amount) {
+        if (typeof amount === 'number' && Number.isFinite(amount)) {
+          costDisplay.textContent = `$${amount.toFixed(4)}`;
+        } else {
+          costDisplay.textContent = '';
+        }
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function renderMarkdown(text) {
+        if (!text) return '';
+        if (markdownRenderer) {
+          return markdownRenderer.render(String(text));
+        }
+        return escapeHtml(String(text)).replace(/\n/g, '<br />');
+      }
+
+      function scrollToBottom() {
+        requestAnimationFrame(() => {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+      }
+
+      function render() {
+        if (conversation.length === 0 && !streamingText && !isLoading) {
+          messagesEl.innerHTML = '<div class="placeholder">Ask a question about library services, resources, or policies.</div>';
+          return;
+        }
+
+        let html = '';
+
+        for (let i = 0; i < conversation.length; i++) {
+          const entry = conversation[i];
+          if (entry.type === 'user') {
+            html += `<div class="message message-user"><div class="message-content">${escapeHtml(entry.content)}</div></div>`;
+          } else if (entry.type === 'assistant') {
+            html += `<div class="message message-assistant">`;
+            html += `<div class="message-assistant-header">`;
+            html += `<span class="message-assistant-label">Assistant</span>`;
+            html += `<button class="copy-button" data-copy-index="${i}" onclick="copyMessage(${i})" title="Copy response">⧉</button>`;
+            html += `</div>`;
+            html += `<div class="message-content">${renderMarkdown(entry.content)}</div>`;
+            html += `</div>`;
+          } else if (entry.type === 'tool') {
+            const statusClass = entry.status === 'completed' ? 'completed' : 'running';
+            const statusText = entry.status === 'completed' ? 'Complete' : 'Running';
+            const isOpen = entry.status !== 'completed';
+
+            html += `<div class="message"><div class="tool-use">`;
+            html += `<div class="tool-header" onclick="toggleTool('${entry.id}')">`;
+            html += `<span class="tool-name">${escapeHtml(entry.name)}</span>`;
+            html += `<span class="tool-status ${statusClass}">${statusText}</span>`;
+            html += `</div>`;
+            html += `<div id="tool-${entry.id}" class="tool-details ${isOpen ? 'open' : ''}">`;
+
+            if (entry.input) {
+              html += `<div class="tool-section-label">Input</div>`;
+              html += `<pre>${escapeHtml(typeof entry.input === 'string' ? entry.input : JSON.stringify(entry.input, null, 2))}</pre>`;
+            }
+
+            if (entry.outputs && entry.outputs.length > 0) {
+              for (let i = 0; i < entry.outputs.length; i++) {
+                html += `<div class="tool-section-label">${entry.outputs.length > 1 ? `Output ${i + 1}` : 'Output'}</div>`;
+                html += `<pre>${escapeHtml(entry.outputs[i])}</pre>`;
+              }
+            }
+
+            html += `</div></div></div>`;
+          } else if (entry.type === 'meta') {
+            const errorClass = entry.isError ? ' error' : '';
+            html += `<div class="meta-message${errorClass}">${escapeHtml(entry.text)}</div>`;
+          }
+        }
+
+        if (isLoading) {
+          html += `<div class="loading-spinner"><div class="spinner"></div><span>Thinking...</span></div>`;
+        }
+
+        if (streamingText) {
+          html += `<div class="message message-assistant streaming"><div class="message-content">${renderMarkdown(streamingText)}</div></div>`;
+        }
+
+        messagesEl.innerHTML = html;
+        scrollToBottom();
+      }
+
+      window.toggleTool = function(id) {
+        const el = document.getElementById(`tool-${id}`);
+        if (el) {
+          el.classList.toggle('open');
+        }
+      };
+
+      function addMessage(entry) {
+        if (entry.type === 'user' || entry.type === 'assistant') {
+          const text = typeof entry.content === 'string' ? entry.content.trim() : '';
+          if (!text) return null;
+          entry = { ...entry, content: text };
+        }
+        conversation.push(entry);
+        return entry;
+      }
+
+      function normalizeToolOutput(output) {
+        if (typeof output === 'string') return output;
+        if (Array.isArray(output)) {
+          return output.map(item => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object' && typeof item.text === 'string') return item.text;
+            return JSON.stringify(item);
+          }).join('\n');
+        }
+        if (output && typeof output === 'object') {
+          return JSON.stringify(output, null, 2);
+        }
+        return String(output ?? '');
+      }
+
+      const seenToolStarts = new Set();
+
+      function handleStreamEvent({ event, data }) {
+        switch (event) {
+          case 'assistant-text': {
+            if (data?.text) {
+              if (data.mode === 'block') {
+                streamingText = data.text;
+              } else {
+                streamingText += data.text;
+              }
+              render();
+            }
+            break;
+          }
+          case 'tool-use': {
+            if (data?.stage === 'start') {
+              const id = data.id || `tool-${Date.now()}`;
+              if (seenToolStarts.has(id)) break;
+              seenToolStarts.add(id);
+
+              const entry = {
+                type: 'tool',
+                id,
+                name: data.name || 'Tool',
+                input: data.input || null,
+                outputs: [],
+                status: 'running'
+              };
+              addMessage(entry);
+              toolState.set(id, entry);
+              render();
+            } else if (data?.stage === 'end' && data?.id) {
+              const entry = toolState.get(data.id);
+              if (entry) {
+                entry.status = 'completed';
+                render();
+              }
+            }
+            break;
+          }
+          case 'tool-result': {
+            const id = data?.id;
+            const output = normalizeToolOutput(data?.output);
+            const entry = id ? toolState.get(id) : undefined;
+            if (entry) {
+              entry.status = 'completed';
+              if (output) entry.outputs.push(output);
+              toolState.delete(id);
+              render();
+            }
+            break;
+          }
+          case 'result': {
+            if (data?.totalCostUsd) {
+              updateCostDisplay(data.totalCostUsd);
+            }
+            if (data?.isError) {
+              isLoading = false;
+              addMessage({ type: 'meta', text: 'The agent reported an error.', isError: true });
+              streamingText = '';
+              render();
+            }
+            break;
+          }
+          case 'error': {
+            isLoading = false;
+            addMessage({ type: 'meta', text: data?.error || 'Request failed.', isError: true });
+            streamingText = '';
+            render();
+            break;
+          }
+          case 'done': {
+            isLoading = false;
+            if (!streamingText && data?.response) {
+              streamingText = data.response;
+            }
+            if (streamingText.trim()) {
+              addMessage({ type: 'assistant', content: streamingText.trim() });
+            }
+            streamingText = '';
+            render();
+            break;
+          }
+        }
+      }
+
+      function parseSseEvent(block) {
+        if (!block) return null;
+        const lines = block.split('\n');
+        let event = 'message';
+        const dataLines = [];
+
+        for (const rawLine of lines) {
+          const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+          if (line.startsWith('event:')) {
+            event = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trim());
+          }
+        }
+
+        let data = null;
+        if (dataLines.length > 0) {
+          const payload = dataLines.join('\n');
+          try {
+            data = JSON.parse(payload);
+          } catch (e) {
+            console.warn('Failed to parse SSE', payload);
+          }
+        }
+
+        return { event, data };
+      }
+
+      function findEventBoundary(buffer) {
+        const lfIndex = buffer.indexOf('\n\n');
+        const crlfIndex = buffer.indexOf('\r\n\r\n');
+        if (lfIndex === -1 && crlfIndex === -1) {
+          return { index: -1, length: 0 };
+        }
+        if (lfIndex === -1 || (crlfIndex !== -1 && crlfIndex < lfIndex)) {
+          return { index: crlfIndex, length: 4 };
+        }
+        return { index: lfIndex, length: 2 };
+      }
+
+      function buildHistoryPayload() {
+        const relevant = conversation.filter((entry) => entry.type === 'user' || entry.type === 'assistant');
+        if (relevant.length === 0) return [];
+        const limited = relevant.length > HISTORY_LIMIT ? relevant.slice(relevant.length - HISTORY_LIMIT) : relevant;
+        return limited.map((entry) => ({
+          role: entry.type,
+          content: entry.content
+        }));
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const prompt = promptField.value.trim();
+        if (!prompt) return;
+
+        const historyPayload = buildHistoryPayload();
+        addMessage({ type: 'user', content: prompt });
+        render();
+        promptField.value = '';
+        promptField.style.height = 'auto';
+
+        if (activeController) {
+          activeController.abort();
+        }
+
+        submitButton.disabled = true;
+        submitButton.style.display = 'none';
+        stopButton.style.display = 'block';
+        seenToolStarts.clear();
+        toolState.clear();
+        streamingText = '';
+        isLoading = true;
+        render();
+
+        const controller = new AbortController();
+        activeController = controller;
+
+        try {
+          const res = await fetch(`${API_BASE}/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt, libraryId: 'mina-rees', history: historyPayload }),
+            signal: controller.signal
+          });
+
+          if (!res.ok) {
+            let message = 'Request failed.';
+            try {
+              const payload = await res.json();
+              if (payload?.error) message = payload.error;
+            } catch (e) {}
+            addMessage({ type: 'meta', text: message, isError: true });
+            render();
+            return;
+          }
+
+          if (!res.body) {
+            addMessage({ type: 'meta', text: 'Streaming not supported.', isError: true });
+            render();
+            return;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            let boundaryInfo = findEventBoundary(buffer);
+            while (boundaryInfo.index !== -1) {
+              const rawEvent = buffer.slice(0, boundaryInfo.index);
+              buffer = buffer.slice(boundaryInfo.index + boundaryInfo.length);
+              const parsed = parseSseEvent(rawEvent);
+              if (parsed) handleStreamEvent(parsed);
+              boundaryInfo = findEventBoundary(buffer);
+            }
+          }
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            console.error(error);
+            addMessage({ type: 'meta', text: 'Something went wrong.', isError: true });
+            render();
+          }
+        } finally {
+          if (activeController === controller) {
+            activeController = null;
+          }
+          isLoading = false;
+          submitButton.disabled = false;
+          submitButton.style.display = 'block';
+          stopButton.style.display = 'none';
+          promptField.focus();
+        }
+      });
+
+      // Initial focus
+      promptField.focus();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mina Rees Library Reference Agent</title>
+    <script>window.__BASE_PATH__ = '__BASE_PATH__';</script>
+    <link rel="stylesheet" href="__TAILWIND_PATH__" />
+  </head>
+  <body data-theme="corporate" class="bg-base-200 text-base-content">
+    <main class="min-h-screen">
+      <div class="container mx-auto max-w-4xl px-4 py-10 space-y-10">
+        <header class="text-center space-y-3">
+          <h1 class="text-3xl md:text-4xl font-semibold">Mina Rees Library Reference Agent</h1>
+          <p class="text-base md:text-lg text-base-content/70">Ask about services, resources, or policies—responses arrive with citations from the Mina Rees Library.</p>
+        </header>
+
+        <section id="response" class="chat-shell card bg-base-100 shadow-xl border border-base-200" aria-live="polite">
+          <div class="card-body gap-6">
+            <div class="space-y-4">
+              <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-base-content/70">
+                <span id="context-label" class="badge badge-outline badge-lg px-4 py-3">Context: Mina Rees Library (The Graduate Center)</span>
+                <span id="cost-label" class="badge badge-secondary badge-lg px-4 py-3" hidden>Cost: $0.0000</span>
+              </div>
+              <div class="chat-stream bg-base-100 border border-base-200 rounded-xl p-4 max-h-[430px] overflow-y-auto">
+                <div class="assistant-text flex flex-col gap-4" data-placeholder>Ready when you are.</div>
+              </div>
+            </div>
+            <div class="divider my-0"></div>
+            <form id="query-form" class="space-y-4" autocomplete="off">
+              <input type="hidden" id="library" name="library" value="mina-rees" />
+              <div class="form-control w-full">
+                <label for="prompt" class="label">
+                  <span class="label-text text-base-content font-semibold">Your question</span>
+                </label>
+                <textarea
+                  id="prompt"
+                  name="prompt"
+                  class="textarea textarea-bordered textarea-lg min-h-[140px] w-full"
+                  placeholder="Ask about hours, services, or policies"
+                  required
+                ></textarea>
+              </div>
+              <div class="card-actions justify-end">
+                <button id="ask-button" type="submit" class="btn btn-primary btn-lg">Ask the agent</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <footer class="text-center text-sm text-base-content/70">
+          Powered by the Claude Agent SDK. Results cite official library resources when available.
+        </footer>
+      </div>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      const markdownRenderer = typeof window.markdownit === 'function'
+        ? window.markdownit({ html: false, linkify: true, breaks: false })
+        : null;
+
+      if (markdownRenderer) {
+        const defaultLinkOpen =
+          markdownRenderer.renderer.rules.link_open ||
+          ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options));
+        markdownRenderer.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+          const token = tokens[idx];
+          if (!token.attrGet('target')) {
+            token.attrPush(['target', '_blank']);
+          }
+          token.attrSet('rel', 'noopener noreferrer');
+          token.attrJoin('class', 'link link-primary');
+          return defaultLinkOpen(tokens, idx, options, env, self);
+        };
+      }
+
+      const form = document.getElementById('query-form');
+      const promptField = document.getElementById('prompt');
+      const libraryField = document.getElementById('library');
+      const responsePanel = document.getElementById('response');
+      const assistantTextEl = responsePanel.querySelector('.assistant-text');
+      const submitButton = document.getElementById('ask-button');
+      const contextLabel = document.getElementById('context-label');
+      const costLabel = document.getElementById('cost-label');
+      const BASE_PATH = (() => {
+        const configuredBasePath =
+          typeof window.__BASE_PATH__ === 'string' && window.__BASE_PATH__ !== '__BASE_PATH__'
+            ? window.__BASE_PATH__
+            : '';
+        if (configuredBasePath) {
+          return configuredBasePath;
+        }
+
+        const rawPath = window.location.pathname.replace(/\/?index\.html$/, '');
+        if (!rawPath || rawPath === '/' || rawPath === '') {
+          return '';
+        }
+
+        const trimmed = rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
+        const segments = trimmed.split('/').filter(Boolean);
+        if (segments.length === 0) {
+          return '';
+        }
+        return `/${segments[0]}`;
+      })();
+      const API_BASE = BASE_PATH ? `${BASE_PATH}/api` : '/api';
+
+      const toolState = new Map();
+      const conversation = [];
+      const MAX_CONVERSATION_TURNS = 12;
+      let pendingUserEntry = null;
+      let assistantEntryAddedInFlight = false;
+      let requestFailedInFlight = false;
+      let activeController = null;
+      let accumulatedText = '';
+      let lastBlockText = '';
+
+      function updateContextLabel(value) {
+        if (!contextLabel) {
+          return;
+        }
+        const mapping = {
+          'mina-rees': 'Mina Rees Library (The Graduate Center)'
+        };
+        const key = value ? String(value) : '';
+        const display = mapping[key] || (key ? key : 'Mina Rees Library (The Graduate Center)');
+        contextLabel.textContent = `Context: ${display}`;
+      }
+
+      function updateCostLabel(amount) {
+        if (!costLabel) {
+          return;
+        }
+        if (typeof amount === 'number' && Number.isFinite(amount)) {
+          costLabel.textContent = `Cost: $${amount.toFixed(4)}`;
+          costLabel.hidden = false;
+        } else {
+          costLabel.hidden = true;
+        }
+      }
+
+      updateContextLabel(libraryField ? libraryField.value : null);
+      updateCostLabel(null);
+
+      function trimConversationHistory() {
+        let userAssistantCount = conversation.reduce(
+          (total, entry) => total + (entry.type === 'user' || entry.type === 'assistant' ? 1 : 0),
+          0
+        );
+
+        while (userAssistantCount > MAX_CONVERSATION_TURNS && conversation.length > 0) {
+          const removed = conversation.shift();
+          if (!removed) {
+            break;
+          }
+          if ((removed.type === 'user' || removed.type === 'assistant') && userAssistantCount > 0) {
+            userAssistantCount -= 1;
+          }
+          if (removed.type === 'tool' && removed.id) {
+            toolState.delete(removed.id);
+          }
+        }
+      }
+
+      function addConversationEntry(entry) {
+        if (entry.type === 'user' || entry.type === 'assistant') {
+          const text = typeof entry.content === 'string' ? entry.content.trim() : '';
+          if (!text) {
+            return null;
+          }
+          entry = { ...entry, content: text };
+        }
+
+        conversation.push(entry);
+        trimConversationHistory();
+        return entry;
+      }
+
+      function removeConversationEntry(entry) {
+        if (!entry) {
+          return;
+        }
+        const index = conversation.indexOf(entry);
+        if (index !== -1) {
+          conversation.splice(index, 1);
+        }
+      }
+
+      function buildPromptForRequest(latestUserEntry) {
+        if (!latestUserEntry) {
+          return '';
+        }
+
+        const messageHistory = conversation.filter((entry) => entry.type === 'user' || entry.type === 'assistant');
+        const latestIndex = messageHistory.lastIndexOf(latestUserEntry);
+        const historySlice =
+          latestIndex > 0 ? messageHistory.slice(Math.max(0, latestIndex - MAX_CONVERSATION_TURNS), latestIndex) : [];
+
+        if (historySlice.length === 0) {
+          return latestUserEntry.content;
+        }
+
+        const lines = ['Previous conversation:'];
+        for (const entry of historySlice) {
+          const speaker = entry.type === 'user' ? 'Patron' : 'Agent';
+          lines.push(`${speaker}: ${entry.content}`);
+        }
+        lines.push('');
+        lines.push(`Patron: ${latestUserEntry.content}`);
+        return lines.join('\n').trim();
+      }
+
+      const HTML_ESCAPE_LOOKUP = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      };
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => HTML_ESCAPE_LOOKUP[char]);
+      }
+
+      function formatPlainText(text) {
+        if (text === null || text === undefined) {
+          return '';
+        }
+        return escapeHtml(String(text)).replace(/\n/g, '<br />');
+      }
+
+      function renderMarkdownContent(text) {
+        if (!text) {
+          return '';
+        }
+        if (markdownRenderer) {
+          return markdownRenderer.render(String(text));
+        }
+        return formatPlainText(text);
+      }
+
+      function renderConversation(streamingText = '', shouldScroll = false) {
+        const pendingAssistant = typeof streamingText === 'string' ? streamingText : '';
+        const hasStreaming = pendingAssistant.trim().length > 0;
+
+        const visibleEntries = conversation.length > 0;
+        if (!visibleEntries && !hasStreaming) {
+          assistantTextEl.dataset.placeholder = 'true';
+          assistantTextEl.textContent = 'Ready when you are.';
+          return;
+        }
+
+        assistantTextEl.removeAttribute('data-placeholder');
+
+        const parts = [];
+        for (const entry of conversation) {
+          if (entry.type === 'user') {
+            parts.push(`
+              <div class="chat chat-end">
+                <div class="chat-header text-xs opacity-70 mb-1">Patron</div>
+                <div class="chat-bubble chat-bubble-primary text-base leading-relaxed">${formatPlainText(entry.content)}</div>
+              </div>
+            `);
+            continue;
+          }
+
+          if (entry.type === 'assistant') {
+            parts.push(`
+              <div class="chat chat-start">
+                <div class="chat-header text-xs opacity-70 mb-1">Agent</div>
+                <div class="chat-bubble bg-base-100 text-base-content leading-relaxed shadow-md">${renderMarkdownContent(entry.content)}</div>
+              </div>
+            `);
+            continue;
+          }
+
+          if (entry.type === 'meta') {
+            const bubbleClass = entry.isError ? 'chat-bubble-error' : 'chat-bubble-info';
+            parts.push(`
+              <div class="chat chat-center">
+                <div class="chat-bubble ${bubbleClass} text-sm font-medium">${formatPlainText(entry.text)}</div>
+              </div>
+            `);
+            continue;
+          }
+
+          if (entry.type === 'tool') {
+            const statusText = entry.status === 'completed' ? 'Complete' : 'Running...';
+            const statusBadgeClass = entry.status === 'completed' ? 'badge badge-success badge-sm' : 'badge badge-info badge-sm';
+            const inputHtml = entry.input
+              ? `
+                  <div class="space-y-1">
+                    <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Input</div>
+                    <pre class="bg-base-300/40 rounded-md p-3 text-xs text-base-content/90">${escapeHtml(formatObject(entry.input))}</pre>
+                  </div>
+                `
+              : '';
+            const outputsHtml = entry.outputs
+              .map((output, index) => `
+                  <div class="space-y-1">
+                    <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">${entry.outputs.length > 1 ? `Output ${index + 1}` : 'Output'}</div>
+                    <pre class="bg-base-300/30 rounded-md p-3 text-xs text-base-content/90">${escapeHtml(output)}</pre>
+                  </div>
+                `)
+              .join('');
+
+            const shouldDefaultOpen = entry.status !== 'completed';
+
+            parts.push(`
+              <div class="chat chat-start">
+                <div class="chat-header text-xs opacity-70 mb-1 flex items-center gap-2">
+                  <span>Tool</span>
+                  <span class="badge badge-outline badge-sm">${statusText}</span>
+                </div>
+                <div class="chat-bubble bg-base-200 text-base-content leading-relaxed max-w-full">
+                  <div class="collapse collapse-arrow bg-base-200 text-sm" data-tool-id="${escapeHtml(entry.id)}">
+                    <input type="checkbox" ${shouldDefaultOpen ? 'checked' : ''} />
+                    <div class="collapse-title px-0 text-sm font-semibold flex items-center gap-2">
+                      <span>🔧 ${escapeHtml(entry.name)}</span>
+                      <span class="${statusBadgeClass}">${statusText}</span>
+                    </div>
+                    <div class="collapse-content px-0 pt-2 space-y-4">
+                      ${inputHtml}
+                      ${outputsHtml}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            `);
+          }
+        }
+
+        if (hasStreaming) {
+          parts.push(`
+            <div class="chat chat-start">
+              <div class="chat-header text-xs opacity-70 mb-1">Agent</div>
+              <div class="chat-bubble bg-base-200 text-base-content leading-relaxed animate-pulse">${renderMarkdownContent(pendingAssistant)}</div>
+            </div>
+          `);
+        }
+
+        assistantTextEl.innerHTML = parts.join('');
+        if (shouldScroll) {
+          scrollResponseToBottom();
+        }
+      }
+
+      function formatObject(value) {
+        if (typeof value === 'string') {
+          return value;
+        }
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (error) {
+          return String(value);
+        }
+      }
+
+      function normalizeToolOutput(output) {
+        if (typeof output === 'string') {
+          return output;
+        }
+        if (Array.isArray(output)) {
+          return output
+            .map((item) => {
+              if (typeof item === 'string') {
+                return item;
+              }
+              if (item && typeof item === 'object' && typeof item.text === 'string') {
+                return item.text;
+              }
+              return JSON.stringify(item);
+            })
+            .join('\n');
+        }
+        if (output && typeof output === 'object') {
+          return JSON.stringify(output, null, 2);
+        }
+        return String(output ?? '');
+      }
+
+      function resetResponse(statusMessage) {
+        accumulatedText = '';
+        lastBlockText = '';
+        toolState.clear();
+        updateCostLabel(null);
+        if (statusMessage) {
+          appendMeta(statusMessage);
+        } else {
+          renderConversation();
+        }
+      }
+
+      function setPlaceholder() {
+        accumulatedText = '';
+        lastBlockText = '';
+        renderConversation();
+      }
+
+      function appendAssistantText({ text = '', mode }) {
+        if (!text) {
+          return;
+        }
+
+        if (mode === 'block') {
+          if (text === lastBlockText) {
+            return;
+          }
+          if (accumulatedText) {
+            accumulatedText += '\n\n';
+          }
+          accumulatedText += text;
+          lastBlockText = text;
+          renderConversation(accumulatedText, true);
+          return;
+        }
+
+        accumulatedText += text;
+        renderConversation(accumulatedText, mode !== 'block');
+      }
+
+      function appendToolEventStart(payload) {
+        const entry = addConversationEntry({
+          type: 'tool',
+          id: payload?.id ?? `tool-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          name: payload?.name ? String(payload.name) : 'Tool',
+          input: payload?.input ?? null,
+          outputs: [],
+          status: 'running'
+        });
+
+        if (entry && entry.id) {
+          toolState.set(entry.id, entry);
+        }
+
+        renderConversation('', true);
+        scrollResponseToBottom();
+      }
+
+      function appendToolEventEnd(payload) {
+        if (!payload) {
+          return;
+        }
+        const id = payload.id ?? null;
+        const entry = id ? toolState.get(id) : undefined;
+        if (entry) {
+          entry.status = 'completed';
+          renderConversation('', true);
+          scrollResponseToBottom();
+        }
+      }
+
+      function appendToolResult(payload) {
+        const id = payload?.id ?? null;
+        const output = normalizeToolOutput(payload?.output);
+
+        const entry = id ? toolState.get(id) : undefined;
+        if (entry) {
+          entry.status = 'completed';
+          if (output) {
+            entry.outputs.push(output);
+          }
+          toolState.delete(id);
+          renderConversation('', true);
+          scrollResponseToBottom();
+        }
+      }
+
+      function appendMeta(message) {
+        const text = typeof message === 'string' ? message.trim() : String(message ?? '').trim();
+        if (!text) {
+          return;
+        }
+
+        const lowered = text.toLowerCase();
+        if (lowered.startsWith('context:')) {
+          updateContextLabel(text.slice(8).trim());
+          return;
+        }
+
+        if (lowered.startsWith('session cost:')) {
+          const raw = text.slice('session cost:'.length).trim();
+          const amount = raw.startsWith('$') ? Number.parseFloat(raw.slice(1)) : Number.parseFloat(raw);
+          if (!Number.isNaN(amount)) {
+            updateCostLabel(amount);
+          }
+          return;
+        }
+
+        addConversationEntry({ type: 'meta', text, isError: false });
+        renderConversation('', true);
+        scrollResponseToBottom();
+      }
+
+      function appendError(message) {
+        const text = typeof message === 'string' ? message : String(message ?? '');
+        updateCostLabel(null);
+        addConversationEntry({ type: 'meta', text, isError: true });
+        renderConversation('', true);
+        scrollResponseToBottom();
+      }
+
+      function scrollResponseToBottom() {
+        if (!assistantTextEl) {
+          return;
+        }
+        const scroller = assistantTextEl.closest('.chat-stream');
+        if (!scroller) {
+          return;
+        }
+        const lastMessage = assistantTextEl.lastElementChild;
+        window.requestAnimationFrame(() => {
+          scroller.scrollTop = scroller.scrollHeight;
+          if (lastMessage && typeof lastMessage.scrollIntoView === 'function') {
+            lastMessage.scrollIntoView({ block: 'end', inline: 'nearest' });
+          }
+        });
+      }
+
+      function findEventBoundary(buffer) {
+        const lfIndex = buffer.indexOf('\n\n');
+        const crlfIndex = buffer.indexOf('\r\n\r\n');
+        if (lfIndex === -1 && crlfIndex === -1) {
+          return { index: -1, length: 0 };
+        }
+        if (lfIndex === -1 || (crlfIndex !== -1 && crlfIndex < lfIndex)) {
+          return { index: crlfIndex, length: 4 };
+        }
+        return { index: lfIndex, length: 2 };
+      }
+
+      function parseSseEvent(block) {
+        if (!block) {
+          return null;
+        }
+
+        const lines = block.split('\n');
+        let event = 'message';
+        const dataLines = [];
+
+        for (const rawLine of lines) {
+          const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+          if (line.startsWith('event:')) {
+            event = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trim());
+          }
+        }
+
+        let data = null;
+        if (dataLines.length > 0) {
+          const payload = dataLines.join('\n');
+          try {
+            data = JSON.parse(payload);
+          } catch (error) {
+            console.warn('Failed to parse SSE payload', payload);
+          }
+        }
+
+        return { event, data };
+      }
+
+      function handleStreamEvent({ event, data }) {
+        switch (event) {
+          case 'start': {
+            if (data?.libraryId) {
+              updateContextLabel(data.libraryId);
+            }
+            break;
+          }
+          case 'assistant-text': {
+            appendAssistantText(data ?? {});
+            break;
+          }
+          case 'tool-use': {
+            if (data?.stage === 'start') {
+              appendToolEventStart(data);
+            } else if (data?.stage === 'end') {
+              appendToolEventEnd(data);
+            }
+            break;
+          }
+          case 'tool-result': {
+            appendToolResult(data ?? {});
+            break;
+          }
+          case 'result': {
+            if (data?.isError) {
+              appendError('The agent reported an error while completing this request.');
+              requestFailedInFlight = true;
+              accumulatedText = '';
+              lastBlockText = '';
+              renderConversation();
+            } else if (typeof data?.totalCostUsd === 'number') {
+              updateCostLabel(data.totalCostUsd);
+            }
+            break;
+          }
+          case 'error': {
+            appendError(data?.error ?? 'The agent could not complete the request.');
+            requestFailedInFlight = true;
+            accumulatedText = '';
+            lastBlockText = '';
+            renderConversation();
+            break;
+          }
+          case 'done': {
+            if (!accumulatedText && data?.response) {
+              appendAssistantText({ text: data.response, mode: 'block' });
+            }
+            if (!requestFailedInFlight) {
+              const finalResponse = (typeof data?.response === 'string' && data.response.trim())
+                ? data.response.trim()
+                : accumulatedText.trim();
+              if (finalResponse) {
+                const assistantEntry = addConversationEntry({ type: 'assistant', content: finalResponse });
+                if (assistantEntry) {
+                  assistantEntryAddedInFlight = true;
+                }
+              }
+            }
+            accumulatedText = '';
+            lastBlockText = '';
+            renderConversation('', true);
+            appendMeta('Response complete.');
+            break;
+          }
+          default: {
+            break;
+          }
+        }
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const prompt = promptField.value.trim();
+        if (!prompt) {
+          return;
+        }
+
+        pendingUserEntry = addConversationEntry({ type: 'user', content: prompt });
+        assistantEntryAddedInFlight = false;
+        requestFailedInFlight = false;
+        if (!pendingUserEntry) {
+          return;
+        }
+        const requestPrompt = buildPromptForRequest(pendingUserEntry);
+        renderConversation();
+        promptField.value = '';
+
+        if (activeController) {
+          activeController.abort();
+        }
+
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.setAttribute('aria-busy', 'true');
+        }
+        resetResponse('Checking resources...');
+
+        const controller = new AbortController();
+        activeController = controller;
+
+        try {
+          const res = await fetch(`${API_BASE}/query`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              prompt: requestPrompt,
+              libraryId: libraryField.value
+            }),
+            signal: controller.signal
+          });
+
+          if (!res.ok) {
+            let message = 'The agent could not complete the request.';
+            try {
+              const payload = await res.json();
+              if (payload && typeof payload.error === 'string') {
+                message = payload.error;
+              }
+            } catch (error) {
+              // ignore parse errors
+            }
+            appendError(message);
+            requestFailedInFlight = true;
+            return;
+          }
+
+          if (!res.body) {
+            appendError('Streaming is not supported in this browser.');
+            requestFailedInFlight = true;
+            return;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) {
+              break;
+            }
+            buffer += decoder.decode(value, { stream: true });
+
+            let boundaryInfo = findEventBoundary(buffer);
+            while (boundaryInfo.index !== -1) {
+              const rawEvent = buffer.slice(0, boundaryInfo.index);
+              buffer = buffer.slice(boundaryInfo.index + boundaryInfo.length);
+              const parsed = parseSseEvent(rawEvent);
+              if (parsed) {
+                handleStreamEvent(parsed);
+              }
+              boundaryInfo = findEventBoundary(buffer);
+            }
+          }
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            console.error(error);
+            appendError('Something went wrong. Please try again in a moment.');
+            requestFailedInFlight = true;
+          }
+        } finally {
+          if (activeController === controller) {
+            activeController = null;
+          }
+          if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.removeAttribute('aria-busy');
+          }
+          if (!accumulatedText) {
+            setPlaceholder();
+          }
+          lastBlockText = '';
+          if (!assistantEntryAddedInFlight && pendingUserEntry) {
+            removeConversationEntry(pendingUserEntry);
+          }
+          pendingUserEntry = null;
+          assistantEntryAddedInFlight = false;
+          requestFailedInFlight = false;
+          renderConversation();
+          if (promptField && typeof promptField.focus === 'function') {
+            promptField.focus({ preventScroll: true });
+          }
+        }
+      });
+    </script>
+  </body>
+</html>
