@@ -16,6 +16,8 @@ export interface PrimoSearchInput {
   scopeOverride?: string;
   tabOverride?: string;
   includePcAvailability?: boolean;
+  qInclude?: string;
+  facets?: string[];
 }
 
 export interface PrimoSearchInfo {

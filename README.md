@@ -70,12 +70,13 @@ The agent sees approved notes on every query and uses them naturally in response
 
 ## Running the reference agent service
 
-The Express server runs under a macOS launch agent so it stays available in the background. After changing server code, restart the agent with the helper scripts:
+For local development you can:
 
-- `npm run restart:server` – restarts `com.stephenzweibel.reference-agent` (wraps `launchctl bootout` + `launchctl bootstrap`).
-- `npm run status:server` – prints the current `launchctl print` output for the same agent.
+- Run the CLI entrypoint with `npm run dev` (prompts for a single patron question).
+- Start the web server via `npm run dev:server` and open the UI served from `public/`.
+- Build once with `npm run build`, then launch the compiled server using `npm run start:server`.
 
-These scripts assume you are working on the same machine where the launch agent is configured.
+Production deployments can wrap `npm run start:server` in whichever process manager suits your environment (systemd, launchd, PM2, etc.).
 
 ## Contributing
 

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { processAgentStream, type ConversationTurn } from './services/agentRunner.js';
+import { processAgentStream, type ConversationTurn, substituteCitationTokens } from './services/agentRunner.js';
 import { searchPrimo } from './primo/client.js';
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -244,8 +244,9 @@ export function createApp(): express.Express {
           if (message.type === 'stream_event') {
             const event = message.event;
             if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-              const text = event.delta.text ?? '';
-              if (text) {
+              const rawText = event.delta.text ?? '';
+              if (rawText) {
+                const text = substituteCitationTokens(rawText);
                 sendEvent('assistant-text', { text, mode: 'delta' });
               }
             } else if (event?.type === 'content_block_start' && event.block?.type === 'tool_use') {
@@ -274,8 +275,9 @@ export function createApp(): express.Express {
             const blocks = message.message?.content ?? [];
             for (const block of blocks) {
               if (block?.type === 'text') {
-                const text = block.text ?? '';
-                if (text) {
+                const rawText = block.text ?? '';
+                if (rawText) {
+                  const text = substituteCitationTokens(rawText);
                   sendEvent('assistant-text', { text, mode: 'block' });
                 }
                 continue;

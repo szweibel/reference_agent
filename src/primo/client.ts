@@ -336,6 +336,16 @@ export async function searchPrimo(input: PrimoSearchInput): Promise<PrimoSearchR
     params.set('pcAvailability', 'true');
   }
 
+  if (input.qInclude) {
+    params.set('qInclude', input.qInclude);
+  }
+
+  if (input.facets && input.facets.length > 0) {
+    for (const facet of input.facets) {
+      params.append('facet', facet);
+    }
+  }
+
   const url = `${config.baseUrl}?${params.toString()}`;
   const response = await fetch(url, {
     headers: {

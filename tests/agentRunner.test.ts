@@ -1,5 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getActiveSearchCache, SearchCache } from '../src/lib/searchCache.js';
+
 type ProcessAgentStreamType = (typeof import('../src/services/agentRunner.js'))['processAgentStream'];
 
 type SDKMessageLike = {
@@ -80,10 +82,7 @@ describe('processAgentStream', () => {
       {
         type: 'assistant',
         message: {
-          content: [
-            { type: 'text', text: 'Partial ' },
-            { type: 'text', text: 'answer with citation.' }
-          ]
+          content: [{ type: 'text', text: 'Answer with citation https://example.test/info.' }]
         }
       },
       { type: 'result', is_error: false }
@@ -96,7 +95,7 @@ describe('processAgentStream', () => {
       metadata: { source: 'web' }
     });
 
-    expect(result).toEqual({ response: 'Partial answer with citation.', streamed: true });
+    expect(result).toEqual({ response: 'Answer with citation https://example.test/info.', streamed: true });
 
     expect(querySpy).toHaveBeenCalledTimes(1);
     const queryArgs = querySpy.mock.calls[0][0];
@@ -105,7 +104,7 @@ describe('processAgentStream', () => {
       systemPrompt: 'system prompt',
       permissionMode: 'bypassPermissions'
     });
-    expect(queryArgs.options.allowedTools).toEqual(['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME]);
+    expect(queryArgs.options.allowedTools).toEqual(['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME, 'SearchBlog', 'SearchDatabases']);
 
     const mcpServers = queryArgs.options.mcpServers as Record<string, unknown> | undefined;
     expect(mcpServers).toBeTruthy();
@@ -116,7 +115,7 @@ describe('processAgentStream', () => {
     expect(logInteractionSpy).toHaveBeenCalledTimes(1);
     const entry = logInteractionSpy.mock.calls[0][0];
     expect(entry.userPrompt).toBe('Opening hours?');
-    expect(entry.assistantResponse).toBe('Partial answer with citation.');
+    expect(entry.assistantResponse).toBe('Answer with citation https://example.test/info.');
     expect(entry.success).toBe(true);
     expect(entry.metadata).toEqual({ source: 'web' });
     expect(typeof entry.timestamp).toBe('string');
@@ -168,5 +167,129 @@ describe('processAgentStream', () => {
     const entry = logInteractionSpy.mock.calls[0][0];
     expect(entry.userPrompt).toBe('Check connection');
     expect(entry.success).toBe(true);
+  });
+
+  it('creates an isolated search cache for each agent run', async () => {
+    const messages = [
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          delta: { type: 'text_delta', text: 'Chunk' }
+        }
+      },
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: 'Final response with link https://example.test/resource' }]
+        }
+      },
+      { type: 'result', is_error: false }
+    ];
+
+    querySpy.mockReturnValueOnce(createAsyncIterable(messages));
+    const firstCaches: SearchCache[] = [];
+
+    await processAgentStream({
+      prompt: 'First run',
+      onMessage: async () => {
+        firstCaches.push(getActiveSearchCache());
+      }
+    });
+
+    expect(firstCaches.length).toBeGreaterThan(0);
+    const firstCache = firstCaches[0];
+
+    querySpy.mockReturnValueOnce(createAsyncIterable(messages));
+    const secondCaches: SearchCache[] = [];
+
+    await processAgentStream({
+      prompt: 'Second run',
+      onMessage: async () => {
+        secondCaches.push(getActiveSearchCache());
+      }
+    });
+
+    expect(secondCaches.length).toBeGreaterThan(0);
+    const secondCache = secondCaches[0];
+
+    expect(secondCache).not.toBe(firstCache);
+  });
+});
+
+describe('runAgent', () => {
+  it('streams substituted citation links to onTextChunk listeners', async () => {
+    getActiveSearchCache().clear();
+
+    const searchItems = [
+      {
+        title: 'Example Resource',
+        permalink: 'https://example.test/resource',
+        recordId: 'abc',
+        catalogLink: '[Catalog link 1](https://example.test/resource)'
+      }
+    ];
+
+    const messages: SDKMessageLike[] = [
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          delta: { type: 'text_delta', text: 'Resource {{CITE_' }
+        }
+      },
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          delta: { type: 'text_delta', text: '0}} is available.' }
+        }
+      },
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: 'Resource {{CITE_0}} is available.' }]
+        }
+      },
+      { type: 'result', is_error: false }
+    ];
+
+    querySpy.mockReturnValueOnce({
+      [Symbol.asyncIterator]() {
+        let index = 0;
+        let seeded = false;
+        return {
+          async next() {
+            if (!seeded) {
+              getActiveSearchCache().addSearch(searchItems);
+              seeded = true;
+            }
+            if (index < messages.length) {
+              return { value: messages[index++], done: false };
+            }
+            return { value: undefined, done: true };
+          }
+        };
+      }
+    });
+
+    const chunks: string[] = [];
+
+    const { runAgent } = await import('../src/services/agentRunner.js');
+
+    const result = await runAgent({
+      prompt: 'Test citation streaming',
+      onTextChunk: (chunk) => {
+        chunks.push(chunk);
+      }
+    });
+
+    expect(chunks.length).toBeGreaterThan(0);
+    const streamed = chunks.join('');
+    expect(streamed).toContain('[Catalog link 1](https://example.test/resource)');
+    expect(streamed).not.toContain('{{CITE_0}}');
+
+    expect(result.streamed).toBe(true);
+    expect(result.response).toContain('[Catalog link 1](https://example.test/resource)');
   });
 });

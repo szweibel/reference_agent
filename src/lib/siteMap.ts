@@ -16,9 +16,14 @@ export const SITE_MAP: SiteMapEntry[] = [
     summary: 'Live chat, email, and consultation request options for getting help from librarians.'
   },
   {
-    title: 'Contact Us Directory',
+    title: 'Contact Us',
     url: 'https://libguides.gc.cuny.edu/contact_us',
-    summary: 'Directory of service desks, departments, phone numbers, and key email addresses.'
+    summary: 'Contact information for service desks, departments, and phone numbers (part of Ask a Librarian guide).'
+  },
+  {
+    title: 'Library Directory (A-Z Staff)',
+    url: 'https://libguides.gc.cuny.edu/directory',
+    summary: 'Find library staff by name and title (alphabetical listing).'
   },
   {
     title: 'Accounts & Logins',
@@ -66,9 +71,9 @@ export const SITE_MAP: SiteMapEntry[] = [
     summary: 'Highlights of collections, subject strengths, and special collections information.'
   },
   {
-    title: 'Subject & Staff Directory',
+    title: 'Subject Liaisons Directory',
     url: 'https://libguides.gc.cuny.edu/directory/subject',
-    summary: 'Find subject liaisons with contact details and areas of expertise.'
+    summary: 'Find librarians by subject area and specialty - contact details and areas of expertise.'
   },
   {
     title: 'Databases A-Z',
@@ -98,7 +103,7 @@ export const SITE_MAP: SiteMapEntry[] = [
   {
     title: 'Dissertations & Theses',
     url: 'https://libguides.gc.cuny.edu/dissertations',
-    summary: 'Policies and resources for depositing Graduate Center dissertations and theses.'
+    summary: 'Depositing Graduate Center dissertations and theses, plus finding and searching dissertations.'
   },
   {
     title: 'Scholarly Services',

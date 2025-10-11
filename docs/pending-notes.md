@@ -1,15 +1,12 @@
-# Pending Reference Notes
+# Pending Notes
 
-Agent-suggested notes awaiting review. Approve entries by moving them to `reference-notes.md`.
-
-## Format
-```
-[Date] [Confidence: HIGH/MEDIUM/LOW]
-Query: "user question"
-Finding: "what was discovered"
-Source: URL or tool used
-```
+Review periodically and move HIGH confidence entries to reference-notes.md
 
 ---
 
-*Instructions: Review weekly. Move HIGH confidence verified entries to reference-notes.md. Delete incorrect or low-value entries.*
+
+[2025-10-10] [Confidence: HIGH]
+Query: "Can I bring my dog to the library? Pet policy?"
+Finding: Service animals are allowed per CUNY policy (confirmed at https://libguides.gc.cuny.edu/accessibility). Pet policy information is not documented on Visit or Access pages - only service animal policy is stated on accessibility page.
+Source: https://libguides.gc.cuny.edu/accessibility
+

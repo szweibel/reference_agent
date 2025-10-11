@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { searchPrimo } from '../primo/client.js';
 import type { PrimoItemSummary, PrimoSearchResult, PrimoSearchInput } from '../primo/types.js';
+import { getActiveSearchCache } from '../lib/searchCache.js';
 
 export const PRIMO_TOOL_NAME = 'SearchPrimo';
 
@@ -12,7 +13,8 @@ const inputSchema = z
     field: z.enum(['any', 'title', 'creator', 'sub', 'isbn', 'issn']).optional(),
     operator: z.enum(['contains', 'exact']).optional(),
     limit: z.number().int().min(1).max(10).optional(),
-    offset: z.number().int().min(0).optional()
+    offset: z.number().int().min(0).optional(),
+    journalsOnly: z.boolean().optional()
   })
   .shape;
 
@@ -58,11 +60,10 @@ function formatLocalAvailability(item: PrimoItemSummary['availability']['local']
   };
 }
 
-function formatItem(item: PrimoItemSummary) {
+function formatItem(item: PrimoItemSummary, index: number) {
   return {
     title: item.title,
-    recordId: item.recordId,
-    permalink: item.permalink,
+    citationToken: `{{CITE_${index}}}`,
     publicationYear: item.publicationYear,
     authors: formatAuthors(item.authors),
     description: item.description,
@@ -82,8 +83,9 @@ function formatItem(item: PrimoItemSummary) {
 
 function summariseResult(result: PrimoSearchResult) {
   return {
+    citationInstructions: 'To cite any result in your response, use the citationToken field (e.g., {{CITE_0}}, {{CITE_1}}, etc.). Never copy record IDs or permalinks directly - always use the citation tokens which will be automatically converted to properly formatted links.',
     info: result.info,
-    items: result.items.map(formatItem)
+    items: result.items.map((item, index) => formatItem(item, index))
   };
 }
 
@@ -92,7 +94,7 @@ export const primoSearchTool = tool(
   `Search the Mina Rees Library Primo catalog and return availability details.
 
 Parameters:
-- value: The search term (e.g., book title, author name, keywords)
+- value: The search term (e.g., book title, author name, keywords, journal name)
 - field: Which field to search (default: 'any')
   * 'any' - Search all fields (general keyword search)
   * 'title' - Search title field only
@@ -103,16 +105,22 @@ Parameters:
 - operator: How to match (default: 'contains')
   * 'contains' - Find records containing all words in any order
   * 'exact' - Find exact phrase match
+- journalsOnly: Set to true to search only journals/periodicals (default: false)
 
 Search strategy:
 1. For known-item (specific title) searches: Use field='title', operator='exact'
 2. For author searches: Use field='creator', operator='contains'
 3. For subject/topic searches: Use field='sub' or 'any', operator='contains'
 4. For ISBN/ISSN lookups: Use field='isbn'/'issn', operator='exact'
-5. For general searches: Use field='any', operator='contains'
-6. If first search returns 0 results, try again with operator='contains' or field='any'`,
+5. For journal/newspaper searches: Use field='title' or 'any', journalsOnly=true
+6. For general searches: Use field='any', operator='contains'
+7. If first search returns 0 results, try again with operator='contains' or field='any'
+
+Examples:
+- Find "Washington Post": value="Washington Post", field="title", journalsOnly=true
+- Find journal by ISSN: value="1234-5678", field="issn", journalsOnly=true`,
   inputSchema,
-  async ({ value, field = 'any', operator = 'contains', limit, offset }) => {
+  async ({ value, field = 'any', operator = 'contains', limit, offset, journalsOnly = false }) => {
     try {
       const query = buildQuery(value, field, operator);
       const searchInput: PrimoSearchInput = { query };
@@ -124,8 +132,22 @@ Search strategy:
         searchInput.offset = offset;
       }
 
+      if (journalsOnly) {
+        searchInput.tabOverride = 'jsearch_slot';
+      }
+
       const result = await searchPrimo(searchInput);
       const payload = summariseResult(result);
+
+      // Store in cache for citation token substitution
+      const cacheItems = result.items.map((item, index) => ({
+        title: item.title ?? '',
+        permalink: item.permalink ?? '',
+        recordId: item.recordId ?? '',
+        catalogLink: `[Catalog link ${index + 1}](${item.permalink})`
+      }));
+      getActiveSearchCache().addSearch(cacheItems);
+
       return {
         content: [
           {

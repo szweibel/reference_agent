@@ -5,8 +5,12 @@ import { buildSystemPrompt } from '../lib/prompt.js';
 import { logInteraction, type InteractionLogEntry } from '../lib/logger.js';
 import { getPrimoMcpServer, PRIMO_MCP_SERVER_ID, PRIMO_TOOL_NAME } from '../tools/primoMcpServer.js';
 import { getLogNoteMcpServer, LOG_NOTE_MCP_SERVER_ID, LOG_NOTE_TOOL_NAME } from '../tools/logNoteMcpServer.js';
+import { getBlogMcpServer, BLOG_MCP_SERVER_ID, BLOG_TOOL_NAME } from '../tools/blogMcpServer.js';
+import { getDatabaseMcpServer, DATABASE_MCP_SERVER_ID, DATABASE_TOOL_NAME } from '../tools/databaseMcpServer.js';
+import { getGuidesMcpServer, GUIDES_MCP_SERVER_ID, GUIDES_TOOL_NAME } from '../tools/guidesMcpServer.js';
+import { getActiveSearchCache, runWithSearchCache, SearchCache } from '../lib/searchCache.js';
 
-export const ALLOWED_TOOLS = ['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME] as const;
+export const ALLOWED_TOOLS = ['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME, BLOG_TOOL_NAME, DATABASE_TOOL_NAME, GUIDES_TOOL_NAME] as const;
 
 export type ConversationTurn = {
   role: 'user' | 'assistant';
@@ -35,7 +39,7 @@ export type ProcessAgentStreamOptions = {
 
 export type ProcessAgentStreamResult = RunAgentResult;
 
-const MAX_HISTORY_TURNS = 20;
+const MAX_HISTORY_TURNS = 50;
 
 function sanitiseHistory(history: ConversationTurn[] | undefined): ConversationTurn[] {
   if (!Array.isArray(history) || history.length === 0) {
@@ -78,6 +82,18 @@ function buildPromptWithHistory(history: ConversationTurn[] | undefined, nextPro
   return `${transcript}\n\nPatron: ${trimmedPrompt}`;
 }
 
+function substituteCitationTokens(text: string, cache: SearchCache = getActiveSearchCache()): string {
+  // Replace {{CITE_N}} tokens with actual catalog links from cache
+  return text.replace(/\{\{CITE_(\d+)\}\}/g, (match, indexStr) => {
+    const index = parseInt(indexStr, 10);
+    if (isNaN(index)) {
+      return match; // Keep original if not a valid number
+    }
+    const link = cache.getCitationLink(index);
+    return link ?? match; // Keep original if not found in cache
+  });
+}
+
 function extractTextFromAssistantMessage(message: SDKAssistantMessage): string {
   const blocks = message?.message?.content;
   if (!Array.isArray(blocks)) {
@@ -100,6 +116,9 @@ function createAgentQuery(prompt: string, history: ConversationTurn[] | undefine
   const effectivePrompt = buildPromptWithHistory(history, trimmedPrompt);
   const primoServer = getPrimoMcpServer();
   const logNoteServer = getLogNoteMcpServer();
+  const blogServer = getBlogMcpServer();
+  const databaseServer = getDatabaseMcpServer();
+  const guidesServer = getGuidesMcpServer();
   const responseStream = query({
     prompt: effectivePrompt,
     options: {
@@ -108,7 +127,10 @@ function createAgentQuery(prompt: string, history: ConversationTurn[] | undefine
       allowedTools: ALLOWED_TOOLS as unknown as string[],
       mcpServers: {
         [PRIMO_MCP_SERVER_ID]: primoServer,
-        [LOG_NOTE_MCP_SERVER_ID]: logNoteServer
+        [LOG_NOTE_MCP_SERVER_ID]: logNoteServer,
+        [BLOG_MCP_SERVER_ID]: blogServer,
+        [DATABASE_MCP_SERVER_ID]: databaseServer,
+        [GUIDES_MCP_SERVER_ID]: guidesServer
       },
       ...(abortController ? { abortController } : {})
     }
@@ -125,90 +147,182 @@ export async function processAgentStream({
   abortController
 }: ProcessAgentStreamOptions): Promise<ProcessAgentStreamResult> {
   const normalisedHistory = sanitiseHistory(history);
-  const { trimmedPrompt, responseStream } = createAgentQuery(prompt, normalisedHistory, abortController);
+  const cache = new SearchCache();
+  let trimmedPrompt = '';
 
-  let assembledResponse = '';
-  let hasStreamedContent = false;
-  let agentExecutionFailed = false;
-  let capturedError: unknown = null;
+  return runWithSearchCache(async () => {
+    const created = createAgentQuery(prompt, normalisedHistory, abortController);
+    trimmedPrompt = created.trimmedPrompt;
+    const responseStream = created.responseStream;
 
-  try {
-    for await (const message of responseStream) {
-      if (onMessage) {
-        await onMessage(message);
-      }
+    let assembledResponse = '';
+    let hasStreamedContent = false;
+    let agentExecutionFailed = false;
+    let capturedError: unknown = null;
 
-      if (message.type === 'stream_event') {
-        const event = message.event;
-        if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-          const chunk = event.delta.text ?? '';
-          if (chunk) {
-            hasStreamedContent = true;
+    try {
+      for await (const message of responseStream) {
+        if (onMessage) {
+          await onMessage(message);
+        }
+
+        if (message.type === 'stream_event') {
+          const event = message.event;
+          if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+            const chunk = event.delta.text ?? '';
+            if (chunk) {
+              hasStreamedContent = true;
+            }
           }
+          continue;
         }
-        continue;
-      }
 
-      if (message.type === 'assistant') {
-        const text = extractTextFromAssistantMessage(message);
-        if (text) {
-          assembledResponse = text;
+        if (message.type === 'assistant') {
+          const blocks = message.message?.content ?? [];
+          for (const block of blocks) {
+            if (block?.type === 'text') {
+              const text = block.text ?? '';
+              if (text) {
+                assembledResponse = text;
+              }
+            }
+          }
+          continue;
         }
-        continue;
+
+        if (message.type === 'result' && message.is_error) {
+          agentExecutionFailed = true;
+        }
+
       }
 
-      if (message.type === 'result' && message.is_error) {
-        agentExecutionFailed = true;
+      if (agentExecutionFailed) {
+        throw new Error('Agent execution failed.');
       }
+    } catch (error) {
+      capturedError = error;
+      throw error;
+    } finally {
+      const logEntry: InteractionLogEntry = {
+        timestamp: new Date().toISOString(),
+        userPrompt: trimmedPrompt,
+        assistantResponse: assembledResponse,
+        success: !capturedError
+      };
+
+      if (metadata && Object.keys(metadata).length > 0) {
+        logEntry.metadata = metadata;
+      }
+
+      if (normalisedHistory.length > 0) {
+        logEntry.history = normalisedHistory;
+      }
+
+      if (capturedError) {
+        logEntry.error = capturedError instanceof Error ? capturedError.message : String(capturedError);
+        logEntry.success = false;
+      } else if (agentExecutionFailed) {
+        logEntry.error = 'Agent execution failed.';
+        logEntry.success = false;
+      }
+
+      await logInteraction(logEntry).catch((error) => {
+        console.error('Failed to write interaction log:', error);
+      });
     }
 
-    if (agentExecutionFailed) {
-      throw new Error('Agent execution failed.');
+    const finalResponse = substituteCitationTokens(assembledResponse);
+
+    return { response: finalResponse, streamed: hasStreamedContent };
+  }, cache);
+}
+
+// Export for testing
+export { substituteCitationTokens };
+
+type StreamEmitter = {
+  push: (chunk: string) => void;
+  flush: () => void;
+};
+
+function createCitationAwareEmitter(emit: (chunk: string) => void): StreamEmitter {
+  const TOKEN_PREFIX = '{{CITE_';
+  let buffer = '';
+
+  const emitSubstituted = (text: string) => {
+    if (!text) {
+      return;
     }
-  } catch (error) {
-    capturedError = error;
-    throw error;
-  } finally {
-    const logEntry: InteractionLogEntry = {
-      timestamp: new Date().toISOString(),
-      userPrompt: trimmedPrompt,
-      assistantResponse: assembledResponse,
-      success: !capturedError
-    };
+    const substituted = substituteCitationTokens(text);
+    if (substituted) {
+      emit(substituted);
+    }
+  };
 
-    if (metadata && Object.keys(metadata).length > 0) {
-      logEntry.metadata = metadata;
+  const splitBuffer = (text: string): { ready: string; remainder: string } => {
+    const lastOpen = text.lastIndexOf('{{');
+    if (lastOpen === -1) {
+      return { ready: text, remainder: '' };
     }
 
-    if (normalisedHistory.length > 0) {
-      logEntry.history = normalisedHistory;
+    const closing = text.indexOf('}}', lastOpen);
+    if (closing !== -1) {
+      return { ready: text, remainder: '' };
     }
 
-    if (capturedError) {
-      logEntry.error = capturedError instanceof Error ? capturedError.message : String(capturedError);
-      logEntry.success = false;
-    } else if (agentExecutionFailed) {
-      logEntry.error = 'Agent execution failed.';
-      logEntry.success = false;
+    const tail = text.slice(lastOpen);
+    const looksLikeTokenPrefix =
+      TOKEN_PREFIX.startsWith(tail) ||
+      (tail.startsWith(TOKEN_PREFIX) && /^\d*$/.test(tail.slice(TOKEN_PREFIX.length)));
+
+    if (looksLikeTokenPrefix) {
+      return { ready: text.slice(0, lastOpen), remainder: tail };
     }
 
-    await logInteraction(logEntry).catch((error) => {
-      console.error('Failed to write interaction log:', error);
-    });
-  }
+    return { ready: text, remainder: '' };
+  };
 
-  return { response: assembledResponse, streamed: hasStreamedContent };
+  return {
+    push(chunk: string) {
+      if (!chunk) {
+        return;
+      }
+      buffer += chunk;
+      const { ready, remainder } = splitBuffer(buffer);
+      buffer = remainder;
+      if (ready) {
+        emitSubstituted(ready);
+      }
+    },
+    flush() {
+      if (!buffer) {
+        return;
+      }
+      emitSubstituted(buffer);
+      buffer = '';
+    }
+  };
 }
 
 export async function runAgent({ prompt, onTextChunk, metadata, history }: RunAgentOptions): Promise<RunAgentResult> {
   let emittedText = false;
   const normalisedHistory = sanitiseHistory(history);
 
+  const streamEmitter = onTextChunk
+    ? createCitationAwareEmitter((text) => {
+        if (!text) {
+          return;
+        }
+        emittedText = true;
+        onTextChunk(text);
+      })
+    : null;
+
   const streamOptions: ProcessAgentStreamOptions = {
     prompt,
     history: normalisedHistory,
     onMessage: async (message) => {
-      if (!onTextChunk) {
+      if (!streamEmitter) {
         return;
       }
 
@@ -217,8 +331,7 @@ export async function runAgent({ prompt, onTextChunk, metadata, history }: RunAg
         if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
           const chunk = event.delta.text ?? '';
           if (chunk) {
-            emittedText = true;
-            onTextChunk(chunk);
+            streamEmitter.push(chunk);
           }
         }
         return;
@@ -227,11 +340,13 @@ export async function runAgent({ prompt, onTextChunk, metadata, history }: RunAg
       if (message.type === 'assistant') {
         const text = extractTextFromAssistantMessage(message);
         if (text) {
-          if (!emittedText) {
-            emittedText = true;
-            onTextChunk(text);
-          }
+          streamEmitter.push(text);
         }
+        return;
+      }
+
+      if (message.type === 'result') {
+        streamEmitter.flush();
       }
     }
   };
@@ -240,12 +355,17 @@ export async function runAgent({ prompt, onTextChunk, metadata, history }: RunAg
     streamOptions.metadata = metadata;
   }
 
-  const result = await processAgentStream(streamOptions);
-
-  return {
-    response: result.response,
-    streamed: emittedText || result.streamed
-  };
+  try {
+    const result = await processAgentStream(streamOptions);
+    streamEmitter?.flush();
+    return {
+      response: result.response,
+      streamed: emittedText || result.streamed
+    };
+  } catch (error) {
+    streamEmitter?.flush();
+    throw error;
+  }
 }
 
 export { extractTextFromAssistantMessage };
