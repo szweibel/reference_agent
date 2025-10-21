@@ -9,6 +9,7 @@ import { getBlogMcpServer, BLOG_MCP_SERVER_ID, BLOG_TOOL_NAME } from '../tools/b
 import { getDatabaseMcpServer, DATABASE_MCP_SERVER_ID, DATABASE_TOOL_NAME } from '../tools/databaseMcpServer.js';
 import { getGuidesMcpServer, GUIDES_MCP_SERVER_ID, GUIDES_TOOL_NAME } from '../tools/guidesMcpServer.js';
 import { getActiveSearchCache, runWithSearchCache, SearchCache } from '../lib/searchCache.js';
+import { userPromptSubmitHook } from './preRetrieval.js';
 
 export const ALLOWED_TOOLS = ['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME, BLOG_TOOL_NAME, DATABASE_TOOL_NAME, GUIDES_TOOL_NAME] as const;
 
@@ -132,6 +133,11 @@ function createAgentQuery(prompt: string, history: ConversationTurn[] | undefine
         [DATABASE_MCP_SERVER_ID]: databaseServer,
         [GUIDES_MCP_SERVER_ID]: guidesServer
       },
+      hooks: {
+        UserPromptSubmit: [{
+          hooks: [userPromptSubmitHook]
+        }]
+      },
       ...(abortController ? { abortController } : {})
     }
   });
@@ -203,10 +209,14 @@ export async function processAgentStream({
       capturedError = error;
       throw error;
     } finally {
+      // Substitute citation tokens before logging so logs reflect what user actually sees
+      const finalResponse = substituteCitationTokens(assembledResponse, cache);
+
+      // Log the interaction with substituted response
       const logEntry: InteractionLogEntry = {
         timestamp: new Date().toISOString(),
         userPrompt: trimmedPrompt,
-        assistantResponse: assembledResponse,
+        assistantResponse: finalResponse,
         success: !capturedError
       };
 
@@ -231,7 +241,8 @@ export async function processAgentStream({
       });
     }
 
-    const finalResponse = substituteCitationTokens(assembledResponse);
+    // Substitute citation tokens for the return value
+    const finalResponse = substituteCitationTokens(assembledResponse, cache);
 
     return { response: finalResponse, streamed: hasStreamedContent };
   }, cache);

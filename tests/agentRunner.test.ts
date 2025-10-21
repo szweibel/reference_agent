@@ -104,7 +104,12 @@ describe('processAgentStream', () => {
       systemPrompt: 'system prompt',
       permissionMode: 'bypassPermissions'
     });
-    expect(queryArgs.options.allowedTools).toEqual(['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME, 'SearchBlog', 'SearchDatabases']);
+    expect(queryArgs.options.allowedTools).toEqual(['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME, 'SearchBlog', 'SearchDatabases', 'SearchGuides']);
+
+    // Verify hooks are configured
+    expect(queryArgs.options.hooks).toBeDefined();
+    expect(queryArgs.options.hooks?.UserPromptSubmit).toBeDefined();
+    expect(Array.isArray(queryArgs.options.hooks?.UserPromptSubmit)).toBe(true);
 
     const mcpServers = queryArgs.options.mcpServers as Record<string, unknown> | undefined;
     expect(mcpServers).toBeTruthy();
