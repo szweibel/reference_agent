@@ -9,14 +9,15 @@ import { getBlogMcpServer, BLOG_MCP_SERVER_ID, BLOG_TOOL_NAME } from '../tools/b
 import { getDatabaseMcpServer, DATABASE_MCP_SERVER_ID, DATABASE_TOOL_NAME } from '../tools/databaseMcpServer.js';
 import { getGuidesMcpServer, GUIDES_MCP_SERVER_ID, GUIDES_TOOL_NAME } from '../tools/guidesMcpServer.js';
 import { getActiveSearchCache, runWithSearchCache, SearchCache } from '../lib/searchCache.js';
+import { sanitizeHistory, type ConversationTurn } from '../lib/conversationHistory.js';
 import { userPromptSubmitHook } from './preRetrieval.js';
 
 export const ALLOWED_TOOLS = ['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME, BLOG_TOOL_NAME, DATABASE_TOOL_NAME, GUIDES_TOOL_NAME] as const;
 
-export type ConversationTurn = {
-  role: 'user' | 'assistant';
-  content: string;
-};
+// Pre-compiled regex for citation token substitution (performance optimization)
+const CITATION_TOKEN_REGEX = /\{\{CITE_(\d+)\}\}/g;
+
+export type { ConversationTurn };
 
 export type RunAgentOptions = {
   prompt: string;
@@ -40,35 +41,9 @@ export type ProcessAgentStreamOptions = {
 
 export type ProcessAgentStreamResult = RunAgentResult;
 
-const MAX_HISTORY_TURNS = 50;
-
-function sanitiseHistory(history: ConversationTurn[] | undefined): ConversationTurn[] {
-  if (!Array.isArray(history) || history.length === 0) {
-    return [];
-  }
-
-  const turns: ConversationTurn[] = [];
-  for (const entry of history) {
-    if (!entry || typeof entry !== 'object') {
-      continue;
-    }
-    const role = entry.role;
-    const content = typeof entry.content === 'string' ? entry.content.trim() : '';
-    if ((role === 'user' || role === 'assistant') && content) {
-      turns.push({ role, content });
-    }
-  }
-
-  if (turns.length <= MAX_HISTORY_TURNS) {
-    return turns;
-  }
-
-  return turns.slice(turns.length - MAX_HISTORY_TURNS);
-}
-
 function buildPromptWithHistory(history: ConversationTurn[] | undefined, nextPrompt: string): string {
   const trimmedPrompt = nextPrompt.trim();
-  const validHistory = sanitiseHistory(history);
+  const validHistory = sanitizeHistory(history);
   if (validHistory.length === 0) {
     return trimmedPrompt;
   }
@@ -85,7 +60,9 @@ function buildPromptWithHistory(history: ConversationTurn[] | undefined, nextPro
 
 function substituteCitationTokens(text: string, cache: SearchCache = getActiveSearchCache()): string {
   // Replace {{CITE_N}} tokens with actual catalog links from cache
-  return text.replace(/\{\{CITE_(\d+)\}\}/g, (match, indexStr) => {
+  // Note: We must reset lastIndex for global regex when using in a function
+  CITATION_TOKEN_REGEX.lastIndex = 0;
+  return text.replace(CITATION_TOKEN_REGEX, (match, indexStr) => {
     const index = parseInt(indexStr, 10);
     if (isNaN(index)) {
       return match; // Keep original if not a valid number
@@ -145,6 +122,18 @@ function createAgentQuery(prompt: string, history: ConversationTurn[] | undefine
   return { trimmedPrompt, responseStream: responseStream as AsyncIterable<SDKMessage> };
 }
 
+/**
+ * Processes an agent query with streaming support and conversation history.
+ * This is the main entry point for server-side SSE streaming.
+ *
+ * @param options - Configuration options
+ * @param options.prompt - The user's prompt/question
+ * @param options.history - Optional conversation history
+ * @param options.metadata - Optional metadata to include in logs
+ * @param options.onMessage - Callback for each SDK message (for SSE streaming)
+ * @param options.abortController - Optional abort controller for cancellation
+ * @returns Promise resolving to the final response and streaming status
+ */
 export async function processAgentStream({
   prompt,
   history,
@@ -152,7 +141,7 @@ export async function processAgentStream({
   onMessage,
   abortController
 }: ProcessAgentStreamOptions): Promise<ProcessAgentStreamResult> {
-  const normalisedHistory = sanitiseHistory(history);
+  const normalisedHistory = sanitizeHistory(history);
   const cache = new SearchCache();
   let trimmedPrompt = '';
 
@@ -315,9 +304,20 @@ function createCitationAwareEmitter(emit: (chunk: string) => void): StreamEmitte
   };
 }
 
+/**
+ * Runs the agent with optional text streaming via callback.
+ * This is the main entry point for CLI-style execution.
+ *
+ * @param options - Configuration options
+ * @param options.prompt - The user's prompt/question
+ * @param options.onTextChunk - Optional callback for streaming text chunks
+ * @param options.metadata - Optional metadata to include in logs
+ * @param options.history - Optional conversation history
+ * @returns Promise resolving to the final response and streaming status
+ */
 export async function runAgent({ prompt, onTextChunk, metadata, history }: RunAgentOptions): Promise<RunAgentResult> {
   let emittedText = false;
-  const normalisedHistory = sanitiseHistory(history);
+  const normalisedHistory = sanitizeHistory(history);
 
   const streamEmitter = onTextChunk
     ? createCitationAwareEmitter((text) => {

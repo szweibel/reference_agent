@@ -310,6 +310,22 @@ function normaliseDoc(doc: PrimoApiDoc, config: PrimoConfig): PrimoItemSummary {
   };
 }
 
+/**
+ * Searches the library catalog using the Ex Libris Primo API.
+ * Returns normalized results with availability information.
+ *
+ * @param input - Search parameters
+ * @param input.query - Search query string
+ * @param input.limit - Maximum number of results to return (default: 10)
+ * @param input.offset - Pagination offset (default: 0)
+ * @param input.scopeOverride - Optional scope override
+ * @param input.tabOverride - Optional tab override
+ * @param input.includePcAvailability - Include consortium availability (default: true)
+ * @param input.qInclude - Additional query parameters
+ * @param input.facets - Facet filters to apply
+ * @returns Promise resolving to search results with normalized items
+ * @throws Error if API request fails or configuration is missing
+ */
 export async function searchPrimo(input: PrimoSearchInput): Promise<PrimoSearchResult> {
   const config = getPrimoConfig();
   const params = new URLSearchParams();
