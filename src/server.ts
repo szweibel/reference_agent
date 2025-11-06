@@ -2,8 +2,10 @@ import express from 'express';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { rateLimit } from 'express-rate-limit';
 
 import { processAgentStream, type ConversationTurn, substituteCitationTokens } from './services/agentRunner.js';
+import { sanitizeHistory } from './lib/conversationHistory.js';
 import { searchPrimo } from './primo/client.js';
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -30,33 +32,50 @@ const normalizeBasePath = (input: string | undefined): string => {
 const BASE_PATH = normalizeBasePath(process.env.BASE_PATH);
 const API_PREFIX = BASE_PATH === '/' ? '/api' : `${BASE_PATH}/api`;
 const API_PREFIXES = BASE_PATH === '/' ? [API_PREFIX] : ['/api', API_PREFIX];
-const MAX_HISTORY_TURNS = 20;
+const MAX_HISTORY_TURNS_SERVER = 20; // Server limit is more conservative than agent limit
+const MAX_PROMPT_LENGTH = 10000;
 
-function parseHistory(input: unknown): ConversationTurn[] {
-  if (!Array.isArray(input) || input.length === 0) {
-    return [];
-  }
-
-  const turns: ConversationTurn[] = [];
-  for (const entry of input) {
-    if (!entry || typeof entry !== 'object') {
-      continue;
-    }
-    const role = (entry as { role?: unknown }).role;
-    const contentRaw = (entry as { content?: unknown }).content;
-    const content = typeof contentRaw === 'string' ? contentRaw.trim() : '';
-
-    if ((role === 'user' || role === 'assistant') && content) {
-      turns.push({ role, content });
-    }
-  }
-
-  if (turns.length <= MAX_HISTORY_TURNS) {
-    return turns;
-  }
-
-  return turns.slice(turns.length - MAX_HISTORY_TURNS);
+// Simple structured logger
+function logError(message: string, error: unknown, context?: Record<string, unknown>) {
+  const timestamp = new Date().toISOString();
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+  console.error(JSON.stringify({
+    timestamp,
+    level: 'error',
+    message,
+    error: errorMessage,
+    stack: errorStack,
+    ...context
+  }));
 }
+
+function logInfo(message: string, context?: Record<string, unknown>) {
+  const timestamp = new Date().toISOString();
+  console.log(JSON.stringify({
+    timestamp,
+    level: 'info',
+    message,
+    ...context
+  }));
+}
+
+// Rate limiting configuration
+const queryRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30, // limit each IP to 30 requests per windowMs
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const primoRateLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 60, // limit each IP to 60 requests per minute
+  message: { error: 'Too many Primo search requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 export function createApp(): express.Express {
   const app = express();
@@ -115,13 +134,13 @@ export function createApp(): express.Express {
 
   app.use(rootStaticMiddleware);
 
-  const registerPostRoute = (suffix: string, handler: express.RequestHandler) => {
+  const registerPostRoute = (suffix: string, ...handlers: express.RequestHandler[]) => {
     for (const prefix of API_PREFIXES) {
-      app.post(`${prefix}${suffix}`, handler);
+      app.post(`${prefix}${suffix}`, ...handlers);
     }
   };
 
-  registerPostRoute('/primo/search', async (req, res) => {
+  registerPostRoute('/primo/search', primoRateLimiter, async (req, res) => {
     const { query, limit } = req.body ?? {};
     const queryText = typeof query === 'string' ? query.trim() : '';
 
@@ -160,21 +179,31 @@ export function createApp(): express.Express {
 
       res.json(payload);
     } catch (error) {
-      console.error('Primo search failed:', error);
-      res.status(502).json({
+      logError('Primo search failed', error, { query: queryText, limit: resolvedLimit });
+
+      const statusCode = error instanceof Error && error.message.includes('not configured') ? 503 : 502;
+      res.status(statusCode).json({
         error: 'Primo search failed',
         detail: error instanceof Error ? error.message : String(error)
       });
     }
   });
 
-  registerPostRoute('/query', async (req, res) => {
+  registerPostRoute('/query', queryRateLimiter, async (req, res) => {
     const { prompt, libraryId, history: rawHistory } = req.body ?? {};
     const promptText = typeof prompt === 'string' ? prompt.trim() : '';
-    const history = parseHistory(rawHistory);
+    const history = sanitizeHistory(rawHistory as ConversationTurn[] | undefined, MAX_HISTORY_TURNS_SERVER);
 
     if (!promptText) {
       res.status(400).json({ error: 'Prompt is required' });
+      return;
+    }
+
+    if (promptText.length > MAX_PROMPT_LENGTH) {
+      res.status(400).json({
+        error: `Prompt too long (max ${MAX_PROMPT_LENGTH} characters)`,
+        length: promptText.length
+      });
       return;
     }
 
@@ -210,7 +239,11 @@ export function createApp(): express.Express {
       return true;
     };
 
-    console.log('Received streaming request for prompt', promptText, 'library', resolvedLibraryId);
+    logInfo('Received streaming request', {
+      promptLength: promptText.length,
+      libraryId: resolvedLibraryId,
+      hasHistory: history.length > 0
+    });
     sendEvent('start', { libraryId: resolvedLibraryId });
 
     let clientClosed = false;
@@ -229,14 +262,12 @@ export function createApp(): express.Express {
     res.on('close', handleDisconnect);
 
     try {
-      console.log('Starting query for prompt', promptText);
       const { response } = await processAgentStream({
         prompt: promptText,
         history,
         metadata: { source: 'web', libraryId: resolvedLibraryId },
         abortController,
         onMessage: async (message) => {
-          console.log('SSE message', message.type);
           if (clientClosed) {
             return;
           }
@@ -335,10 +366,17 @@ export function createApp(): express.Express {
         res.end();
       }
     } catch (error) {
-      console.error('Agent request failed:', error);
+      logError('Agent request failed', error, {
+        promptLength: promptText.length,
+        libraryId: resolvedLibraryId,
+        clientClosed,
+        streamFinished
+      });
+
       if (!res.writableEnded && !clientClosed) {
         streamFinished = true;
-        sendEvent('error', { error: 'Agent request failed' });
+        const errorMessage = error instanceof Error ? error.message : 'Agent request failed';
+        sendEvent('error', { error: errorMessage });
         res.end();
       }
     }
@@ -379,14 +417,36 @@ export function createApp(): express.Express {
   return app;
 }
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 3110;
 const app = createApp();
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     const basePathSuffix = BASE_PATH === '/' ? '/' : `${BASE_PATH}/`;
-    console.log(`Reference agent web server running at http://localhost:${PORT}${basePathSuffix}`);
+    logInfo('Server started', {
+      port: PORT,
+      basePath: BASE_PATH,
+      url: `http://localhost:${PORT}${basePathSuffix}`
+    });
   });
+
+  // Graceful shutdown handling
+  const gracefulShutdown = (signal: string) => {
+    logInfo('Shutdown signal received', { signal });
+    server.close(() => {
+      logInfo('Server closed gracefully');
+      process.exit(0);
+    });
+
+    // Force shutdown after 10 seconds
+    setTimeout(() => {
+      logError('Forced shutdown after timeout', new Error('Shutdown timeout'));
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 export default app;
