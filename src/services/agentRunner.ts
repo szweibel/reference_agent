@@ -123,6 +123,7 @@ function createAgentQuery(prompt: string, history: ConversationTurn[] | undefine
   const responseStream = query({
     prompt: effectivePrompt,
     options: {
+      model: 'opus',
       systemPrompt,
       permissionMode: 'bypassPermissions',
       allowedTools: ALLOWED_TOOLS as unknown as string[],
