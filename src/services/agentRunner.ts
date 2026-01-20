@@ -8,10 +8,11 @@ import { getLogNoteMcpServer, LOG_NOTE_MCP_SERVER_ID, LOG_NOTE_TOOL_NAME } from 
 import { getBlogMcpServer, BLOG_MCP_SERVER_ID, BLOG_TOOL_NAME } from '../tools/blogMcpServer.js';
 import { getDatabaseMcpServer, DATABASE_MCP_SERVER_ID, DATABASE_TOOL_NAME } from '../tools/databaseMcpServer.js';
 import { getGuidesMcpServer, GUIDES_MCP_SERVER_ID, GUIDES_TOOL_NAME } from '../tools/guidesMcpServer.js';
+import { getHoursMcpServer, HOURS_MCP_SERVER_ID, HOURS_TOOL_NAME } from '../tools/hoursMcpServer.js';
 import { getActiveSearchCache, runWithSearchCache, SearchCache } from '../lib/searchCache.js';
 import { userPromptSubmitHook } from './preRetrieval.js';
 
-export const ALLOWED_TOOLS = ['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME, BLOG_TOOL_NAME, DATABASE_TOOL_NAME, GUIDES_TOOL_NAME] as const;
+export const ALLOWED_TOOLS = ['WebSearch', 'WebFetch', PRIMO_TOOL_NAME, LOG_NOTE_TOOL_NAME, BLOG_TOOL_NAME, DATABASE_TOOL_NAME, GUIDES_TOOL_NAME, HOURS_TOOL_NAME] as const;
 
 export type ConversationTurn = {
   role: 'user' | 'assistant';
@@ -120,6 +121,7 @@ function createAgentQuery(prompt: string, history: ConversationTurn[] | undefine
   const blogServer = getBlogMcpServer();
   const databaseServer = getDatabaseMcpServer();
   const guidesServer = getGuidesMcpServer();
+  const hoursServer = getHoursMcpServer();
   const responseStream = query({
     prompt: effectivePrompt,
     options: {
@@ -132,13 +134,17 @@ function createAgentQuery(prompt: string, history: ConversationTurn[] | undefine
         [LOG_NOTE_MCP_SERVER_ID]: logNoteServer,
         [BLOG_MCP_SERVER_ID]: blogServer,
         [DATABASE_MCP_SERVER_ID]: databaseServer,
-        [GUIDES_MCP_SERVER_ID]: guidesServer
+        [GUIDES_MCP_SERVER_ID]: guidesServer,
+        [HOURS_MCP_SERVER_ID]: hoursServer
       },
       hooks: {
         UserPromptSubmit: [{
           hooks: [userPromptSubmitHook]
         }]
       },
+      // Prevent agent sessions from being persisted to disk, avoiding
+      // session commingling with regular Claude Code sessions
+      persistSession: false,
       ...(abortController ? { abortController } : {})
     }
   });

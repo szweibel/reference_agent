@@ -95,6 +95,9 @@ export const primoSearchTool = tool(
 
 Parameters:
 - value: The search term (e.g., book title, author name, keywords, journal name)
+  IMPORTANT: Pass ONLY the plain search text. Do NOT include field names, operators, commas, or quotes.
+  Correct: value="trolley problem"
+  Wrong: value="any,contains,trolley problem" or value='"trolley problem"'
 - field: Which field to search (default: 'any')
   * 'any' - Search all fields (general keyword search)
   * 'title' - Search title field only
