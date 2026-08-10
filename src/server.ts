@@ -379,7 +379,7 @@ export function createApp(): express.Express {
   return app;
 }
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 3110;
 const app = createApp();
 
 if (process.env.NODE_ENV !== 'test') {
